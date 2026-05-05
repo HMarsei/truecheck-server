@@ -31,6 +31,122 @@ function cleanText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
+function normalizeLang(lang = "es") {
+  const code = String(lang || "es").toLowerCase().slice(0, 2);
+  return ["es", "en", "pt", "fr", "it", "de"].includes(code) ? code : "es";
+}
+
+function detectLikelyInputLang(text = "", fallbackLang = "es") {
+  const value = String(text || "").trim();
+  const lower = value.toLowerCase();
+
+  if (!value) return normalizeLang(fallbackLang);
+
+  const hasSpanishChars = /[ñáéíóúü¿¡]/i.test(value);
+  const hasFrenchChars = /[àâçéèêëîïôûùüÿœ]/i.test(value);
+  const hasGermanChars = /[äöüß]/i.test(value);
+
+  const wordScore = (words) =>
+    words.reduce((score, word) => {
+      const pattern = new RegExp(`(^|\\W)${word}(\\W|$)`, "i");
+      return score + (pattern.test(lower) ? 1 : 0);
+    }, 0);
+
+  const scores = {
+    es: (hasSpanishChars ? 3 : 0) + wordScore(["el", "la", "los", "las", "de", "que", "en", "por", "para", "con", "actual", "presidente", "gobierno"]),
+    en: wordScore(["the", "is", "are", "was", "were", "current", "president", "government", "of", "and", "in", "to", "for", "with"]),
+    pt: wordScore(["o", "a", "os", "as", "de", "que", "em", "para", "com", "atual", "presidente", "governo", "não"]),
+    fr: (hasFrenchChars ? 3 : 0) + wordScore(["le", "la", "les", "des", "est", "sont", "dans", "pour", "avec", "actuel", "président", "gouvernement"]),
+    it: wordScore(["il", "lo", "la", "gli", "le", "di", "che", "è", "sono", "per", "con", "attuale", "presidente", "governo"]),
+    de: (hasGermanChars ? 3 : 0) + wordScore(["der", "die", "das", "ist", "sind", "und", "für", "mit", "aktuelle", "präsident", "regierung"])
+  };
+
+  const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+
+  if (best && best[1] > 0) return best[0];
+
+  return normalizeLang(fallbackLang);
+}
+
+function getLanguageName(lang = "es") {
+  const names = {
+    es: "Spanish",
+    en: "English",
+    pt: "Portuguese",
+    fr: "French",
+    it: "Italian",
+    de: "German"
+  };
+
+  return names[normalizeLang(lang)] || "Spanish";
+}
+
+function getResponseLangRule(text = "", fallbackLang = "es") {
+  // IMPORTANTE: si el frontend manda lang/responseLang, lo respetamos.
+  // Esto arregla casos ambiguos como nombres propios: “Donald Trump”, “Macron”, “Milei”.
+  const requestedLang = normalizeLang(fallbackLang);
+  const detectedLang = requestedLang || detectLikelyInputLang(text, fallbackLang);
+  const languageName = getLanguageName(detectedLang);
+
+  return {
+    detectedLang,
+    languageName,
+    instruction: `
+LANGUAGE CONTRACT - CRITICAL:
+- The final user-facing answer MUST be written in ${languageName}.
+- Do NOT answer in Spanish unless ${languageName} is Spanish.
+- Ignore the language of the sources when choosing the response language.
+- Keep internal JSON keys and enum values exactly as requested.
+- Translate every user-facing message, title, label and value to ${languageName}.
+- If the claim/text is a proper name or ambiguous, still answer in ${languageName}.
+`.trim()
+  };
+}
+
+function getSearchLocale(lang = "es") {
+  const code = normalizeLang(lang);
+
+  const locales = {
+    es: { search_lang: "es", country: "AR" },
+    en: { search_lang: "en", country: "US" },
+    pt: { search_lang: "pt", country: "BR" },
+    fr: { search_lang: "fr", country: "FR" },
+    it: { search_lang: "it", country: "IT" },
+    de: { search_lang: "de", country: "DE" }
+  };
+
+  return locales[code] || locales.es;
+}
+
+function getDisplayLabel(label = "dudoso", lang = "es") {
+  const code = normalizeLang(lang);
+
+  const labels = {
+    es: { verdadero: "🟢 Verdadero", dudoso: "🟡 Dudoso", falso: "🔴 Falso" },
+    en: { verdadero: "🟢 True", dudoso: "🟡 Unclear", falso: "🔴 False" },
+    pt: { verdadero: "🟢 Verdadeiro", dudoso: "🟡 Duvidoso", falso: "🔴 Falso" },
+    fr: { verdadero: "🟢 Vrai", dudoso: "🟡 Incertain", falso: "🔴 Faux" },
+    it: { verdadero: "🟢 Vero", dudoso: "🟡 Incerto", falso: "🔴 Falso" },
+    de: { verdadero: "🟢 Wahr", dudoso: "🟡 Unklar", falso: "🔴 Falsch" }
+  };
+
+  return (labels[code] || labels.es)[label] || (labels[code] || labels.es).dudoso;
+}
+
+function getDataTitlePrefix(lang = "es") {
+  const prefixes = {
+    es: "Ficha de",
+    en: "Profile of",
+    pt: "Ficha de",
+    fr: "Fiche de",
+    it: "Scheda di",
+    de: "Steckbrief von"
+  };
+
+  return prefixes[normalizeLang(lang)] || prefixes.es;
+}
+
+
 function safeJsonParse(text) {
   try {
     if (typeof text !== "string") return null;
@@ -123,8 +239,9 @@ app.get("/test-openai", async (req, res) => {
 // 🌐 BRAVE SEARCH
 // ==========================
 
-async function searchWeb(query) {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&search_lang=es&country=AR`;
+async function searchWeb(query, lang = "es") {
+  const locale = getSearchLocale(lang);
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&search_lang=${locale.search_lang}&country=${locale.country}`;
 
   const response = await fetch(url, {
     method: "GET",
@@ -149,8 +266,9 @@ async function searchWeb(query) {
   }));
 }
 
-async function searchNews(query) {
-  const url = `https://api.search.brave.com/res/v1/news/search?q=${encodeURIComponent(query)}&count=10&search_lang=es&country=AR`;
+async function searchNews(query, lang = "es") {
+  const locale = getSearchLocale(lang);
+  const url = `https://api.search.brave.com/res/v1/news/search?q=${encodeURIComponent(query)}&count=10&search_lang=${locale.search_lang}&country=${locale.country}`;
 
   const response = await fetch(url, {
     method: "GET",
@@ -366,7 +484,9 @@ function sanitizeDataItems(items = []) {
 app.post("/real", async (req, res) => {
   try {
     const text = cleanText(req.body?.text);
+    const langInfo = getResponseLangRule(text, req.body?.responseLang || req.body?.lang || req.body?.userLang || "es");
     console.log("REAL text:", text);
+    console.log("REAL detectedLang:", langInfo.detectedLang);
 
     if (!text) {
       return res.status(400).json({
@@ -378,7 +498,7 @@ app.post("/real", async (req, res) => {
     let results = [];
 
     try {
-      results = await searchNews(text);
+      results = await searchNews(text, langInfo.detectedLang);
       console.log("REAL newsResults count:", results.length);
       console.log("REAL newsResults sample:", results.slice(0, 3));
     } catch (err) {
@@ -387,7 +507,7 @@ app.post("/real", async (req, res) => {
 
     if (!results.length) {
       try {
-        results = await searchWeb(text);
+        results = await searchWeb(text, langInfo.detectedLang);
         console.log("REAL webResults count:", results.length);
         console.log("REAL webResults sample:", results.slice(0, 3));
       } catch (err) {
@@ -420,7 +540,18 @@ app.post("/real", async (req, res) => {
         result: {
           status: "doubtful",
           label: "🟡 Dudoso",
-          message: "No se encontraron fuentes suficientes para verificar este texto.",
+          message:
+            langInfo.detectedLang === "en"
+              ? "Not enough reliable sources were found to verify this text."
+              : langInfo.detectedLang === "pt"
+              ? "Não foram encontradas fontes confiáveis suficientes para verificar este texto."
+              : langInfo.detectedLang === "fr"
+              ? "Aucune source fiable suffisante n’a été trouvée pour vérifier ce texte."
+              : langInfo.detectedLang === "it"
+              ? "Non sono state trovate fonti affidabili sufficienti per verificare questo testo."
+              : langInfo.detectedLang === "de"
+              ? "Es wurden nicht genügend zuverlässige Quellen gefunden, um diesen Text zu überprüfen."
+              : "No se encontraron fuentes suficientes para verificar este texto.",
           confidence: "baja",
           sources: []
         }
@@ -435,30 +566,35 @@ app.post("/real", async (req, res) => {
       .join("\n\n");
 
     const prompt = `
-Analizá la veracidad de la siguiente afirmación usando SOLO la evidencia provista.
+You verify whether a claim is supported by the provided evidence.
+Use ONLY the evidence below.
 
-Texto a verificar:
+${langInfo.instruction}
+
+Claim to verify:
 "${text}"
 
-Fuentes encontradas:
+Evidence sources:
 ${sourcesText}
 
-Reglas:
-- Respondé SOLO con JSON válido.
-- Todo en español.
-- "verdadero" = la evidencia respalda mayormente la afirmación.
-- "falso" = la evidencia contradice claramente la afirmación.
-- "dudoso" = falta evidencia, hay ambigüedad o la afirmación es parcialmente correcta.
-- No seas excesivamente conservador.
-- Si hay una fuente fuerte y no hay contradicción clara, podés responder "verdadero".
-- No respondas "falso" solo por falta de evidencia.
-- "message" debe ser muy breve, máximo 180 caracteres.
-- "links" debe ser [].
+Rules:
+- Return ONLY valid JSON.
+- JSON keys and enum values must stay exactly as specified.
+- "label" must be one of: "verdadero", "falso", "dudoso".
+- "verdadero" = the evidence mostly supports the claim.
+- "falso" = the evidence clearly contradicts the claim.
+- "dudoso" = evidence is insufficient, ambiguous, or partially supports the claim.
+- Do not be excessively conservative.
+- If there is strong evidence and no clear contradiction, you may answer "verdadero".
+- Do not answer "falso" only because evidence is missing.
+- "message" is user-facing: write it only in ${langInfo.languageName}, maximum 180 characters.
+- "confidence" must be one of: "alta", "media", "baja".
+- "links" must be [].
 
-Formato exacto:
+Exact format:
 {
   "label": "verdadero",
-  "message": "texto breve",
+  "message": "short user-facing text in ${langInfo.languageName}",
   "confidence": "alta",
   "links": []
 }
@@ -533,9 +669,9 @@ Formato exacto:
     };
 
     const labelMap = {
-      verdadero: "🟢 Verdadero",
-      dudoso: "🟡 Dudoso",
-      falso: "🔴 Falso"
+      verdadero: getDisplayLabel("verdadero", langInfo.detectedLang),
+      dudoso: getDisplayLabel("dudoso", langInfo.detectedLang),
+      falso: getDisplayLabel("falso", langInfo.detectedLang)
     };
 
     return res.json({
@@ -574,6 +710,7 @@ Formato exacto:
 app.post("/info", async (req, res) => {
   try {
     const text = cleanText(req.body?.text);
+    const langInfo = getResponseLangRule(text, req.body?.responseLang || req.body?.lang || req.body?.userLang || "es");
 
     if (!text) {
       return res.status(400).json({
@@ -586,7 +723,7 @@ app.post("/info", async (req, res) => {
     let results = [];
 
     try {
-      results = await searchWeb(text);
+      results = await searchWeb(text, langInfo.detectedLang);
     } catch (e) {
       console.error("INFO search error:", e);
     }
@@ -598,7 +735,18 @@ app.post("/info", async (req, res) => {
       return res.json({
         ok: true,
         result: {
-          content: "No se encontró información suficientemente confiable.",
+          content:
+            langInfo.detectedLang === "en"
+              ? "Not enough reliable information was found."
+              : langInfo.detectedLang === "pt"
+              ? "Não foram encontradas informações suficientemente confiáveis."
+              : langInfo.detectedLang === "fr"
+              ? "Aucune information suffisamment fiable n’a été trouvée."
+              : langInfo.detectedLang === "it"
+              ? "Non sono state trovate informazioni sufficientemente affidabili."
+              : langInfo.detectedLang === "de"
+              ? "Es wurden keine ausreichend zuverlässigen Informationen gefunden."
+              : "No se encontró información suficientemente confiable.",
           sources: []
         }
       });
@@ -612,18 +760,21 @@ app.post("/info", async (req, res) => {
       .join("\n\n");
 
     const prompt = `
-Explicá brevemente el siguiente tema usando SOLO esta información.
+Explain the following topic briefly using ONLY the provided information.
 
-Texto:
+${langInfo.instruction}
+
+Text:
 "${text}"
 
-Información:
+Information:
 ${sourcesText}
 
-Reglas:
-- Máximo 3 líneas
-- Claro, directo
-- Sin inventar nada
+Rules:
+- Maximum 3 lines.
+- Clear and direct.
+- Do not invent anything.
+- User-facing answer must be only in ${langInfo.languageName}.
 `;
 
     const answer = await askOpenAI(prompt);
@@ -646,7 +797,10 @@ Reglas:
     return res.json({
       ok: true,
       result: {
-        content: "No se pudo obtener información.",
+        content:
+          typeof langInfo !== "undefined" && langInfo.detectedLang === "en"
+            ? "Could not get information."
+            : "No se pudo obtener información.",
         sources: []
       }
     });
@@ -660,6 +814,7 @@ Reglas:
 app.post("/data", async (req, res) => {
   try {
     const text = cleanText(req.body?.text);
+    const langInfo = getResponseLangRule(text, req.body?.responseLang || req.body?.lang || req.body?.userLang || "es");
 
     if (!text) {
       return res.status(400).json({ ok: false });
@@ -668,7 +823,7 @@ app.post("/data", async (req, res) => {
     let results = [];
 
     try {
-      results = await searchWeb(text);
+      results = await searchWeb(text, langInfo.detectedLang);
     } catch (e) {
       console.error("DATA search error:", e);
     }
@@ -681,91 +836,73 @@ app.post("/data", async (req, res) => {
       .join("\n\n");
 
     const prompt = `
-Sos un asistente que genera fichas DATA breves, claras y confiables.
-Actúa como un analista de datos especializado. Investiga y extrae únicamente la información vigente y cargos actuales.
-Devolvé SOLO JSON válido.
+You generate short, clear and reliable DATA profile cards.
+Act as a data analyst. Extract only current, concrete and verifiable information.
+Return ONLY valid JSON.
 
-Objetivo:
-Crear una ficha corta con datos concretos, actuales y verificables.
-No inventes.
-No completes campos con suposiciones.
+${langInfo.instruction}
 
-Reglas estrictas:
-- Temporalidad: Si se trata de personas, para su cargo, usa solo fuentes publicadas en los últimos 6 meses.
-- Exclusión: Ignora cualquier cargo que mencione 'ex', 'anterior', 'pasado' o fechas de finalización (ej. 2019-2023).
-- Verificación: Prioriza sitios oficiales (gobierno, prensa reciente o perfiles corporativos actualizados).
+Goal:
+Create a short profile card with concrete, current and verifiable facts.
+Do not invent.
+Do not complete fields with assumptions.
 
-Reglas generales:
-- Usar solo datos firmes y actuales.
-- Priorizar información actual.
-- Si un dato no es seguro, OMITIRLO.
-- Si se trata de una persona, cargo público, institución, empresa o tema de actualidad, priorizá la información actual.
-- Si se trata de una persona, solo especificar el cargo que tiene hoy.
-- No inventes datos.
-- Priorizá fuentes oficiales y/o medios mas importante.
-- Priorizá información actual y pública.
-- Evitá biografía innecesaria.
-- Evitá datos personales irrelevantes.
-- Mejor menos campos que una ficha dudosa.
-- No incluir frases genéricas como "figura pública" o "persona conocida".
-- No incluir controversias, rumores, vida privada ni información irrelevante.
-- Máximo 5 items.
-- Cada valor debe ser corto, claro y preciso.
+Strict rules:
+- Temporality: for people, current roles must come from recent or clearly current sources.
+- Exclusion: ignore any role that mentions former, previous, past, ex, or ended dates.
+- Verification: prioritize official sites, recent media, or updated corporate/public profiles.
+- Use only firm and current facts.
+- If a fact is uncertain, OMIT it.
+- For current public figures, companies, institutions or news topics, prioritize current information.
+- Avoid unnecessary biography.
+- Avoid irrelevant personal details.
+- Fewer fields are better than a doubtful card.
+- Do not include generic phrases like "public figure" or "known person".
+- Do not include controversies, rumors, private life or irrelevant information.
+- Maximum 5 items.
+- Each value must be short, clear and precise.
+- "title", every "label", and every "value" are user-facing: write them only in ${langInfo.languageName}.
 
-Regla clave:
-- Si hoy tiene un cargo, usarlo tal cual.
-- No usar cargos del pasado, solo del presente.
-- Evitar cargos del pasado, cotejarlos con su actividad actual.
-- No reemplazarlo ni modificarlo.
-- No inventar cargos.
-- Evitá fechas específicas si no son necesarias.
+Adapt by entity type, but include ONLY clearly verifiable fields:
 
-Adaptar según el tipo de entidad, pero SOLO incluir campos claramente verificables:
+PERSON:
+- Name
+- Nationality
+- Age
+- Activity
+- Current role
+- Party or organization, if applicable and clear
 
-Si es PERSONA:
-- Nombre
-- Nacionalidad
-- Edad
-- Actividad
-- Cargo actual (solo el presente, no usar del pasado)
-- Partido u organización (si aplica y es claro)
+COUNTRY or CITY:
+- Type
+- Location
+- Capital, if applicable
+- Main language
+- Approximate population, only if reliable
 
-Si es PAÍS o CIUDAD:
-- Tipo
-- Ubicación
-- Capital (si aplica)
-- Idioma principal
-- Población aproximada (solo si es segura)
+COMPANY or CLUB:
+- Type
+- Country of origin
+- Main activity
+- Organization or league, if applicable
+- Year founded, only if reliable
 
-Si es EMPRESA o CLUB:
-- Tipo
-- País de origen
-- Actividad principal
-- Organización o liga (si aplica)
-- Año de fundación (solo si es seguro)
+CONCEPT:
+- Brief definition
+- Use or context
+- Key fact, only if clear
 
-Si es CONCEPTO:
-- Definición breve
-- Uso o contexto
-- Dato clave (solo si es claro)
-
-Reglas específicas para personas políticas:
-- Usar SOLO el cargo actual vigente.
-- NO usar cargos históricos o pasados.
-- Si hay duda sobre el cargo actual, OMITIR ese campo.
-- Para figuras ampliamente conocidas, incluir actividad y partido si son claros.
-
-Texto:
+Input text:
 "${text}"
 
-Información:
+Information:
 ${sourcesText}
 
-Formato obligatorio:
+Required format:
 {
-  "title": "Ficha de ...",
+  "title": "${getDataTitlePrefix(langInfo.detectedLang)} ...",
   "items": [
-    { "label": "Nombre", "value": "..." }
+    { "label": "Name", "value": "..." }
   ]
 }
 `;
@@ -781,12 +918,18 @@ Formato obligatorio:
 
     if (!parsed.items || parsed.items.length === 0) {
       parsed.items = [
-        { label: "Dato", value: "No se encontró información confiable." }
+        {
+          label: langInfo.detectedLang === "en" ? "Fact" : "Dato",
+          value:
+            langInfo.detectedLang === "en"
+              ? "No reliable information was found."
+              : "No se encontró información confiable."
+        }
       ];
     }
 
     if (!parsed.title) {
-      parsed.title = `Ficha de ${text}`;
+      parsed.title = `${getDataTitlePrefix(langInfo.detectedLang)} ${text}`;
     }
 
     return res.json({
@@ -829,7 +972,7 @@ app.post("/translate", async (req, res) => {
       pt: "Portuguese",
       fr: "French",
       it: "Italian",
-      De: "Deutsch"
+      de: "German"
     };
 
     const targetLanguageName = langNames[targetLang] || "Spanish";
@@ -906,6 +1049,7 @@ app.post("/meaning", async (req, res) => {
   try {
     const rawText = req.body?.text;
     const text = cleanText(rawText);
+    const langInfo = getResponseLangRule(text, req.body?.responseLang || req.body?.lang || req.body?.userLang || "es");
 
     if (!text) {
       return res.status(400).json({
@@ -915,19 +1059,22 @@ app.post("/meaning", async (req, res) => {
     }
 
     const prompt = `
-Dá el significado del siguiente término o expresión en español.
+Give the meaning of the following term or expression.
 
-Reglas:
-- Si es una sola palabra, incluí:
-  1) categoría gramatical
-  2) significado breve
-  3) sinónimos si corresponde
-  4) antónimos si corresponde
-- Si no aplica, no fuerces secciones.
-- Respuesta breve, ordenada y clara.
-- No inventes datos raros.
+${langInfo.instruction}
 
-Texto:
+Rules:
+- If it is a single word, include:
+  1) grammatical category
+  2) brief meaning
+  3) synonyms if applicable
+  4) antonyms if applicable
+- If a section does not apply, do not force it.
+- Keep the answer brief, ordered and clear.
+- Do not invent unusual facts.
+- User-facing answer must be only in ${langInfo.languageName}.
+
+Text:
 """${text}"""
 `;
 
@@ -960,6 +1107,21 @@ app.get("/", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`TrueCheck server running on http://localhost:${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`✅ TrueCheck server running on http://localhost:${PORT}`);
+
+  // 🔥 Warm-up automático
+  try {
+    console.log("🔥 Warm-up iniciado...");
+
+    await fetch(`http://localhost:${PORT}/real`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Test" })
+    });
+
+    console.log("✅ Warm-up completo");
+  } catch (error) {
+    console.log("⚠️ Warm-up falló:", error.message);
+  }
 });
