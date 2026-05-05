@@ -31,12 +31,20 @@ function cleanText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
-function normalizeLang(lang = "es") {
-  const code = String(lang || "es").toLowerCase().slice(0, 2);
-  return ["es", "en", "pt", "fr", "it", "de"].includes(code) ? code : "es";
+function normalizeLang(lang = "en") {
+  const value = String(lang || "en").toLowerCase();
+
+  if (value.startsWith("es")) return "es";
+  if (value.startsWith("en")) return "en";
+  if (value.startsWith("pt")) return "pt";
+  if (value.startsWith("fr")) return "fr";
+  if (value.startsWith("it")) return "it";
+  if (value.startsWith("de")) return "de";
+
+  return "en";
 }
 
-function detectLikelyInputLang(text = "", fallbackLang = "es") {
+function detectLikelyInputLang(text = "", fallbackLang = "en") {
   const value = String(text || "").trim();
   const lower = value.toLowerCase();
 
@@ -68,7 +76,7 @@ function detectLikelyInputLang(text = "", fallbackLang = "es") {
   return normalizeLang(fallbackLang);
 }
 
-function getLanguageName(lang = "es") {
+function getLanguageName(lang = "en") {
   const names = {
     es: "Spanish",
     en: "English",
