@@ -44,7 +44,7 @@ function normalizeLang(lang = "en") {
   return "en";
 }
 
-function detectLikelyInputLang(text = "", fallbackLang = "en") {
+function detectLikelyInputLang(text = "", fallbackLang = "es") {
   const value = String(text || "").trim();
   const lower = value.toLowerCase();
 
@@ -53,6 +53,8 @@ function detectLikelyInputLang(text = "", fallbackLang = "en") {
   const hasSpanishChars = /[ñáéíóúü¿¡]/i.test(value);
   const hasFrenchChars = /[àâçéèêëîïôûùüÿœ]/i.test(value);
   const hasGermanChars = /[äöüß]/i.test(value);
+  const hasItalianChars = /[àèéìíîòóùú]/i.test(value);
+  const hasPortugueseChars = /[ãõçáàâéêíóôõúü]/i.test(value);
 
   const wordScore = (words) =>
     words.reduce((score, word) => {
@@ -61,12 +63,56 @@ function detectLikelyInputLang(text = "", fallbackLang = "en") {
     }, 0);
 
   const scores = {
-    es: (hasSpanishChars ? 3 : 0) + wordScore(["el", "la", "los", "las", "de", "que", "en", "por", "para", "con", "actual", "presidente", "gobierno"]),
-    en: wordScore(["the", "is", "are", "was", "were", "current", "president", "government", "of", "and", "in", "to", "for", "with"]),
-    pt: wordScore(["o", "a", "os", "as", "de", "que", "em", "para", "com", "atual", "presidente", "governo", "não"]),
-    fr: (hasFrenchChars ? 3 : 0) + wordScore(["le", "la", "les", "des", "est", "sont", "dans", "pour", "avec", "actuel", "président", "gouvernement"]),
-    it: wordScore(["il", "lo", "la", "gli", "le", "di", "che", "è", "sono", "per", "con", "attuale", "presidente", "governo"]),
-    de: (hasGermanChars ? 3 : 0) + wordScore(["der", "die", "das", "ist", "sind", "und", "für", "mit", "aktuelle", "präsident", "regierung"])
+    es:
+      (hasSpanishChars ? 6 : 0) +
+      wordScore([
+        "el", "la", "los", "las", "un", "una", "de", "que", "en",
+        "por", "para", "con", "actual", "presidente", "gobierno",
+        "hoy", "ayer", "mañana", "también", "está", "son", "fue"
+      ]),
+
+    en:
+      wordScore([
+        "the", "is", "are", "was", "were", "current", "president",
+        "government", "of", "and", "in", "to", "for", "with",
+        "today", "yesterday", "tomorrow", "also", "this", "that"
+      ]),
+
+    pt:
+      (hasPortugueseChars ? 6 : 0) +
+      wordScore([
+        "o", "a", "os", "as", "um", "uma", "de", "que", "em",
+        "para", "com", "atual", "presidente", "governo", "não",
+        "hoje", "ontem", "amanhã", "também", "você", "isso",
+        "este", "esta", "são", "foi"
+      ]),
+
+    fr:
+      (hasFrenchChars ? 6 : 0) +
+      wordScore([
+        "le", "la", "les", "un", "une", "des", "est", "sont",
+        "dans", "pour", "avec", "actuel", "président", "gouvernement",
+        "aujourd", "hui", "hier", "demain", "aussi", "être",
+        "cette", "ceci", "cela"
+      ]),
+
+    it:
+      (hasItalianChars ? 5 : 0) +
+      wordScore([
+        "il", "lo", "la", "gli", "le", "un", "una", "di", "che",
+        "è", "sono", "per", "con", "attuale", "presidente",
+        "governo", "oggi", "ieri", "domani", "anche", "perché",
+        "questo", "questa", "stato"
+      ]),
+
+    de:
+      (hasGermanChars ? 6 : 0) +
+      wordScore([
+        "der", "die", "das", "ein", "eine", "ist", "sind", "und",
+        "für", "mit", "aktuelle", "präsident", "regierung",
+        "nicht", "heute", "gestern", "morgen", "auch", "über",
+        "zwischen", "dieser", "diese", "dieses"
+      ])
   };
 
   const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
@@ -76,7 +122,7 @@ function detectLikelyInputLang(text = "", fallbackLang = "en") {
   return normalizeLang(fallbackLang);
 }
 
-function getLanguageName(lang = "en") {
+function getLanguageName(lang = "es") {
   const names = {
     es: "Spanish",
     en: "English",
@@ -90,23 +136,25 @@ function getLanguageName(lang = "en") {
 }
 
 function getResponseLangRule(text = "", fallbackLang = "es") {
-  // IMPORTANTE: si el frontend manda lang/responseLang, lo respetamos.
-  // Esto arregla casos ambiguos como nombres propios: “Donald Trump”, “Macron”, “Milei”.
   const requestedLang = normalizeLang(fallbackLang);
-  const detectedLang = requestedLang || detectLikelyInputLang(text, fallbackLang);
-  const languageName = getLanguageName(detectedLang);
+  const languageName = getLanguageName(requestedLang);
 
   return {
-    detectedLang,
+    detectedLang: requestedLang,
     languageName,
     instruction: `
 LANGUAGE CONTRACT - CRITICAL:
 - The final user-facing answer MUST be written in ${languageName}.
 - Do NOT answer in Spanish unless ${languageName} is Spanish.
+- Do NOT answer in English unless ${languageName} is English.
+- Do NOT answer in French unless ${languageName} is French.
+- Do NOT answer in Portuguese unless ${languageName} is Portuguese.
+- Do NOT answer in Italian unless ${languageName} is Italian.
+- Do NOT answer in German unless ${languageName} is German.
 - Ignore the language of the sources when choosing the response language.
 - Keep internal JSON keys and enum values exactly as requested.
 - Translate every user-facing message, title, label and value to ${languageName}.
-- If the claim/text is a proper name or ambiguous, still answer in ${languageName}.
+- NEVER mix languages.
 `.trim()
   };
 }
@@ -117,7 +165,10 @@ function getSearchLocale(lang = "es") {
   const locales = {
     es: { search_lang: "es", country: "AR" },
     en: { search_lang: "en", country: "US" },
-    pt: { search_lang: "pt", country: "BR" },
+
+    // Portugués: Brave anda mejor sin encerrar tanto en BR
+    pt: { search_lang: "pt-br", country: "US" },
+
     fr: { search_lang: "fr", country: "FR" },
     it: { search_lang: "it", country: "IT" },
     de: { search_lang: "de", country: "DE" }
@@ -338,29 +389,76 @@ async function askOpenAIJson({ prompt, schemaName, schema }) {
 // ==========================
 
 const TRUSTED_SOURCE_PATTERNS = [
+  // 🇦🇷 ARGENTINA
   /indec\.gob\.ar/i,
   /argentina\.gob\.ar/i,
-
-  /reuters\.com/i,
-  /apnews\.com/i,
-  /bbc\.com/i,
-  /nytimes\.com/i,
-  /washingtonpost\.com/i,
-  /ft\.com/i,
-  /lemonde\.fr/i,
-  /asahi\.com/i,
-  /efe\.com/i,
-  /cnn\.com/i,
-  /usatoday\.com/i,
-  /theguardian\.com/i,
-
   /infobae\.com/i,
   /lanacion\.com\.ar/i,
   /clarin\.com/i,
   /ambito\.com/i,
   /perfil\.com/i,
   /pagina12\.com\.ar/i,
-  /cronista\.com/i
+  /cronista\.com/i,
+
+  // 🌍 INTERNACIONALES
+  /reuters\.com/i,
+  /apnews\.com/i,
+  /bbc\.com/i,
+  /nytimes\.com/i,
+  /washingtonpost\.com/i,
+  /ft\.com/i,
+  /theguardian\.com/i,
+  /cnn\.com/i,
+  /usatoday\.com/i,
+  /bloomberg\.com/i,
+  /forbes\.com/i,
+  /cnbc\.com/i,
+  /dw\.com/i,
+  /euronews\.com/i,
+  /politico\.com/i,
+  /axios\.com/i,
+
+  // 🇧🇷 PORTUGUÉS / BRASIL
+   /g1\.globo\.com/i,
+  /oglobo\.globo\.com/i,
+  /g1\.globo\.com/i,
+  /uol\.com\.br/i,
+  /folha\.uol\.com\.br/i,
+  /estadao\.com\.br/i,
+  /cnnbrasil\.com\.br/i,
+  /gov\.br/i,
+
+  // 🇫🇷 FRANCÉS
+  /lemonde\.fr/i,
+  /lefigaro\.fr/i,
+  /france24\.com/i,
+  /liberation\.fr/i,
+  /tf1info\.fr/i,
+  /francetvinfo\.fr/i,
+  /gouvernement\.fr/i,
+
+  // 🇮🇹 ITALIANO
+  /repubblica\.it/i,
+  /corriere\.it/i,
+  /ansa\.it/i,
+  /ilsole24ore\.com/i,
+  /rai\.it/i,
+  /governo\.it/i,
+
+  // 🇩🇪 ALEMÁN
+  /spiegel\.de/i,
+  /welt\.de/i,
+  /faz\.net/i,
+  /tagesschau\.de/i,
+  /zeit\.de/i,
+  /bundesregierung\.de/i,
+
+  // 🇪🇸 ESPAÑA
+  /elpais\.com/i,
+  /elmundo\.es/i,
+  /abc\.es/i,
+  /lavanguardia\.com/i,
+  /rtve\.es/i
 ];
 
 const LOW_PRIORITY_SOURCE_PATTERNS = [
@@ -432,6 +530,12 @@ function scoreSource(item = {}) {
 
   // 🇦🇷 Medios fuertes
   if (/lanacion\.com\.ar|clarin\.com|infobae\.com|ambito\.com|perfil\.com/.test(url)) score += 80;
+
+  // 🇧🇷 Medios fuertes Brasil / Portugués
+   if (/g1\.globo\.com|oglobo\.globo\.com|uol\.com\.br|folha\.uol\.com\.br|estadao\.com\.br|cnnbrasil\.com\.br/.test(url)) score += 90;
+
+ // 🇧🇷 Oficiales Brasil
+   if (/gov\.br/.test(url)) score += 120;
 
   // 🏛️ Oficiales
   if (/\.gob\.ar|indec\.gob\.ar/.test(url)) score += 120;
@@ -526,23 +630,36 @@ app.post("/real", async (req, res) => {
     const nonWeakResults = filterWeakSources(results);
     const trustedResults = filterTrustedSources(nonWeakResults);
 
+    const ptFallbackResults =
+     langInfo.detectedLang === "pt"
+     ? results.filter(item =>
+        /g1\.globo\.com|globo\.com|uol\.com\.br|folha\.uol\.com\.br|estadao\.com\.br|cnnbrasil\.com\.br|gov\.br|bbc\.com\/portuguese|cnnbrasils\.com\.br/i.test(item.url || "")
+      )
+    : [];
+
     console.log("REAL nonWeakResults count:", nonWeakResults.length);
     console.log("REAL trustedResults count:", trustedResults.length);
 
     let sourcePool = [];
 
-    if (trustedResults.length >= 2) {
+   if (langInfo.detectedLang === "pt" && ptFallbackResults.length > 0) {
+      sourcePool = ptFallbackResults;
+   } else if (trustedResults.length >= 2) {
       sourcePool = trustedResults;
-    } else if (nonWeakResults.length >= 2) {
-      sourcePool = nonWeakResults;
-    } else {
-      sourcePool = results;
-    }
+   } else if (nonWeakResults.length >= 2) {
+     sourcePool = nonWeakResults;
+  } else {
+    sourcePool = results;
+  }
 
-    const safeLinks = pickBestSources(sourcePool, 3);
+    const safeLinks =
+      pickBestSources(sourcePool, 3).length > 0
+      ? pickBestSources(sourcePool, 3)
+      : pickBestSources(results, 3);
+
     console.log("REAL safeLinks:", safeLinks);
 
-    if (safeLinks.length === 0) {
+    if (safeLinks.length === 0 && results.length === 0) {
       return res.json({
         ok: true,
         result: {
@@ -737,7 +854,10 @@ app.post("/info", async (req, res) => {
     }
 
     const nonWeak = filterWeakSources(results);
-    const best = pickBestSources(nonWeak, 3);
+    const best =
+        pickBestSources(nonWeak, 3).length > 0
+        ? pickBestSources(nonWeak, 3)
+        : pickBestSources(results, 3);
 
     if (best.length === 0) {
       return res.json({
