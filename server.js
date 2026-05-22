@@ -1235,6 +1235,34 @@ app.get("/", (req, res) => {
   });
 });
 
+/* ---------------------------
+   PREMIUM CHECK
+---------------------------- */
+app.post("/premium/check", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.json({ premium: false });
+    }
+
+    const premiumEmails = [
+      "tuemail@gmail.com"
+    ];
+
+    const premium = premiumEmails.includes(
+      email.toLowerCase()
+    );
+
+    res.json({ premium });
+
+  } catch (error) {
+    console.error("PREMIUM CHECK ERROR:", error);
+
+    res.json({ premium: false });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`✅ TrueCheck server running on http://localhost:${PORT}`);
 
