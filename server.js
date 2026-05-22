@@ -1247,7 +1247,7 @@ app.post("/premium/check", async (req, res) => {
     }
 
     const premiumEmails = [
-      "tuemail@gmail.com"
+      "hmarseillan@gmail.com"
     ];
 
     const premium = premiumEmails.includes(
