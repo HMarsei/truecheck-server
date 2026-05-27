@@ -1247,8 +1247,8 @@ app.post("/premium/check", async (req, res) => {
     }
 
     const premiumEmails = [
-      "hmarseillan@gmail.com"
-    ];
+  "hmarseillan@gmail.com"
+   ].map(email => email.toLowerCase());
 
     const premium = premiumEmails.includes(
       email.toLowerCase()
@@ -1260,6 +1260,103 @@ app.post("/premium/check", async (req, res) => {
     console.error("PREMIUM CHECK ERROR:", error);
 
     res.json({ premium: false });
+  }
+});
+
+app.post("/premium/add", async (req, res) => {
+  try {
+    const { email, secret } = req.body;
+
+    if (secret !== process.env.PREMIUM_ADMIN_SECRET) {
+      return res.status(403).json({ ok: false });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        ok: false,
+        error: "Falta email"
+      });
+    }
+
+    console.log("PREMIUM ADD:", email.toLowerCase());
+
+    return res.json({
+      ok: true,
+      email: email.toLowerCase()
+    });
+
+  } catch (error) {
+    console.error("PREMIUM ADD ERROR:", error);
+
+    res.status(500).json({ ok: false });
+  }
+});
+
+/* ---------------------------
+   CREATE MERCADO PAGO SUBSCRIPTION
+---------------------------- */
+app.post("/premium/create-subscription", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        ok: false,
+        error: "Falta email"
+      });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    const response = await fetch(
+      "https://api.mercadopago.com/preapproval",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          reason: "TrueCheck Premium",
+          external_reference: cleanEmail,
+          payer_email: cleanEmail,
+          back_url: "https://truecheck.com.ar/premium-success.html",
+          auto_recurring: {
+            frequency: 1,
+            frequency_type: "months",
+            transaction_amount: 1800,
+            currency_id: "ARS"
+          }
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    console.log("MP CREATE SUBSCRIPTION:", data);
+
+    if (!response.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: data
+      });
+    }
+
+    return res.json({
+      ok: true,
+      init_point: data.init_point,
+      sandbox_init_point: data.sandbox_init_point,
+      id: data.id,
+      status: data.status
+    });
+
+  } catch (error) {
+    console.error("CREATE SUBSCRIPTION ERROR:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Server error"
+    });
   }
 });
 
