@@ -23,6 +23,25 @@ if (!BRAVE_API_KEY) {
   process.exit(1);
 }
 
+const MP_ACCESS_TOKEN =
+  process.env.MERCADO_PAGO_ACCESS_TOKEN || process.env.MP_ACCESS_TOKEN;
+
+const premiumEmails = new Set([
+  "hmarseillan@gmail.com"
+]);
+
+function cleanEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function activatePremium(email) {
+  const clean = cleanEmail(email);
+  if (clean) {
+    premiumEmails.add(clean);
+    console.log("✅ PREMIUM ACTIVADO:", clean);
+  }
+}
+
 // ==========================
 // 🧠 HELPERS
 // ==========================
@@ -1240,19 +1259,15 @@ app.get("/", (req, res) => {
 ---------------------------- */
 app.post("/premium/check", async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = cleanEmail(req.body.email);
 
     if (!email) {
       return res.json({ premium: false });
     }
 
-    const premiumEmails = [
-  "hmarseillan@gmail.com"
-   ].map(email => email.toLowerCase());
+    const premium = premiumEmails.has(email);
 
-    const premium = premiumEmails.includes(
-      email.toLowerCase()
-    );
+    console.log("PREMIUM CHECK:", email, premium);
 
     res.json({ premium });
 
@@ -1260,6 +1275,90 @@ app.post("/premium/check", async (req, res) => {
     console.error("PREMIUM CHECK ERROR:", error);
 
     res.json({ premium: false });
+  }
+});
+
+app.post("/webhook/mercadopago", async (req, res) => {
+  try {
+    console.log("📩 MP WEBHOOK:", JSON.stringify(req.body, null, 2));
+
+    const body = req.body || {};
+
+    const type =
+      body.type ||
+      body.topic ||
+      body.action ||
+      "";
+
+    const id =
+      body?.data?.id ||
+      body.id;
+
+    if (!id) {
+      return res.sendStatus(200);
+    }
+
+    // Suscripciones
+    if (
+      String(type).includes("preapproval") ||
+      String(type).includes("subscription")
+    ) {
+      const mpRes = await fetch(
+        `https://api.mercadopago.com/preapproval/${id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${MP_ACCESS_TOKEN}`
+          }
+        }
+      );
+
+      const sub = await mpRes.json();
+
+      console.log("MP SUBSCRIPTION:", sub);
+
+      const email = cleanEmail(sub.payer_email);
+      const status = String(sub.status || "").toLowerCase();
+
+      if (
+        email &&
+        ["authorized", "active"].includes(status)
+      ) {
+        activatePremium(email);
+      }
+
+      return res.sendStatus(200);
+    }
+
+    // Pagos normales
+    if (String(type).includes("payment")) {
+      const mpRes = await fetch(
+        `https://api.mercadopago.com/v1/payments/${id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${MP_ACCESS_TOKEN}`
+          }
+        }
+      );
+
+      const payment = await mpRes.json();
+
+      console.log("MP PAYMENT:", payment);
+
+      const email = cleanEmail(payment?.payer?.email);
+      const status = String(payment.status || "").toLowerCase();
+
+      if (email && status === "approved") {
+        activatePremium(email);
+      }
+
+      return res.sendStatus(200);
+    }
+
+    res.sendStatus(200);
+
+  } catch (error) {
+    console.error("MP WEBHOOK ERROR:", error);
+    res.sendStatus(200);
   }
 });
 
