@@ -1316,7 +1316,7 @@ app.post("/webhook/mercadopago", async (req, res) => {
 
       console.log("MP SUBSCRIPTION:", sub);
 
-      const email = cleanEmail(sub.payer_email);
+      const email = cleanEmail(sub.external_reference);
       const status = String(sub.status || "").toLowerCase();
 
       if (
@@ -1418,7 +1418,6 @@ app.post("/premium/create-subscription", async (req, res) => {
         body: JSON.stringify({
           reason: "TrueCheck Premium",
           external_reference: cleanEmail,
-          payer_email: cleanEmail,
           back_url: "https://truecheck.com.ar/premium-success.html",
           auto_recurring: {
             frequency: 1,
